@@ -1,0 +1,1669 @@
+#!/usr/bin/env bash
+
+# @describe Interact with the LinkedIn Data API
+# @option -k --key <key> "Your RapidAPI Key for LinkedIn API (or set LINKEDIN_API_KEY)"
+# @option -h --host <host> "RapidAPI host for LinkedIn API" @default "linkedin-api8.p.rapidapi.com"
+# @flag   -j --json "Output raw JSON (skip jq pretty-printing)"
+# @meta require-tools curl,jq
+
+# @cmd Interact with LinkedIn profiles
+profile() {
+  :
+}
+
+# @cmd Get basic profile data
+# @arg username! "LinkedIn profile username (e.g., satyanadella)"
+profile::get() {
+  local endpoint="/?username=${argc_username}"
+  make_request "GET" "$endpoint"
+}
+
+# @cmd profile connections Get profile connection count
+# @arg username! "LinkedIn profile username (e.g., adamselipsky)"
+profile::connections() {
+  local endpoint="/connection-count?username=${argc_username}"
+  make_request "GET" "$endpoint"
+}
+
+# @cmd profile all Get profile data, connection count, and posts
+# @arg username! "LinkedIn profile username (e.g., adamselipsky)"
+profile::all() {
+  local endpoint="/profile-data-connection-count-posts?username=${argc_username}"
+  make_request "GET" "$endpoint"
+}
+
+# @cmd Interact with LinkedIn posts
+posts() {
+  :
+}
+
+# @cmd posts search Search for posts based on criteria
+# @arg keyword! "Keyword to search for in posts"
+# @option --sort-by <sort> "Sort results (date_posted, relevance)" @default "date_posted"
+# @option --date-posted <period> "Filter by date posted (e.g., 'Past 24 hours', 'Past week', 'Past month')"
+# @option --page <num> "Page number for results" @default 1
+# @option --content-type <type> "Filter by content type (e.g., ARTICLE, IMAGE, VIDEO)"
+# @option --from-member <ids> "Filter by author member IDs (comma-separated URNs like ACoAA...)"
+# @option --from-company <ids> "Filter by author company IDs (comma-separated numbers like 1441,1035)"
+# @option --mentions-member <ids> "Filter by mentioned member IDs (comma-separated URNs)"
+# @option --mentions-org <ids> "Filter by mentioned organization IDs (comma-separated numbers)"
+# @option --author-industry <ids> "Filter by author industry IDs (comma-separated numbers like 96,4)"
+# @option --author-company <ids> "Filter by author company IDs (comma-separated numbers)"
+# @option --author-title <title> "Filter by author title (string)"
+posts::search() {
+  local endpoint="/search-posts"
+
+  # Start building the JSON payload with mandatory fields
+  json_payload=$(jq -n \
+    --arg keyword "$argc_keyword" \
+    --arg sortBy "$argc_sort_by" \
+    --argjson page "$argc_page" \
+    '{ keyword: $keyword, sortBy: $sortBy, page: $page }')
+
+  # Add optional fields conditionally using a helper function
+  json_payload=$(add_json_field "$json_payload" "datePosted" "$argc_date_posted" "string")
+  json_payload=$(add_json_field "$json_payload" "contentType" "$argc_content_type" "string")
+  json_payload=$(add_json_field "$json_payload" "fromMember" "$argc_from_member" "string_array")
+  json_payload=$(add_json_field "$json_payload" "fromCompany" "$argc_from_company" "number_array")
+  json_payload=$(add_json_field "$json_payload" "mentionsMember" "$argc_mentions_member" "string_array")
+  # API example used "mentionsOrganization", mapping --mentions-org to it
+  json_payload=$(add_json_field "$json_payload" "mentionsOrganization" "$argc_mentions_org" "number_array")
+  json_payload=$(add_json_field "$json_payload" "authorIndustry" "$argc_author_industry" "number_array")
+  json_payload=$(add_json_field "$json_payload" "authorCompany" "$argc_author_company" "number_array")
+  json_payload=$(add_json_field "$json_payload" "authorTitle" "$argc_author_title" "string")
+
+  # Ensure the final payload is valid JSON (jq handles this)
+  make_request "POST" "$endpoint" "$json_payload"
+}
+
+# @cmd posts get-with-comments Get a specific post with its comments
+# @arg urn! "Post URN (e.g., 7181285160586211328)"
+posts::get_with_comments() {
+  local endpoint="/get-profile-post-and-comments?urn=${argc_urn}"
+  make_request "GET" "$endpoint"
+}
+
+# @cmd Interact with LinkedIn people
+people() {
+  # When no subcommand is provided, show available subcommands
+  if [[ -z "${argc_subcommand:-}" ]]; then
+    echo "Available people subcommands:"
+    echo "  search    - Search for people based on criteria"
+    exit 0
+  fi
+}
+
+# @cmd people search Search for people based on criteria
+# @arg keywords! "Keywords to search for (e.g., 'software engineer')"
+# @option --start <num> "Starting position for results" @default 0
+# @option --geo <ids> "Filter by location Geo IDs (comma-separated numbers like 103644278,101165590)"
+# @option --page <num> "Page number for results" @default 1
+people::search() {
+  # Fix: Ensure there's no space between endpoint and query params
+  local endpoint="/search-people"
+  local query_params="?keywords=${argc_keywords}&start=${argc_start}"
+
+  # Add page parameter if provided
+  if [[ -n "$argc_page" ]]; then
+    query_params="${query_params}&page=${argc_page}"
+  fi
+
+  # Add geo parameter if provided
+  if [[ -n "$argc_geo" ]]; then
+    query_params="${query_params}&geo=${argc_geo}"
+  fi
+
+  # Debug: Uncomment to check what's being sent to make_request
+  # echo "DEBUG: Endpoint: ${endpoint}${query_params}" >&2
+
+  make_request "GET" "${endpoint}${query_params}"
+}
+
+# @cmd Interact with LinkedIn companies
+company() {
+  :
+}
+
+# @cmd company get Get details for a specific company
+# @arg username! "Company username/handle (e.g., google)"
+company::get() {
+  local endpoint="/get-company-details?username=${argc_username}"
+  make_request "GET" "$endpoint"
+}
+
+# @cmd company search Search for companies based on criteria
+# @option --keyword <keyword> "Keyword to search for in company name/description" @default ""
+# @option --locations <ids> "Filter by location Geo IDs (comma-separated numbers like 103644278)"
+# @option --sizes <codes> "Filter by company size codes (comma-separated, e.g., D,E,F,G)"
+# @flag   --has-jobs "Only include companies with job postings"
+# @option --industries <ids> "Filter by industry IDs (comma-separated numbers like 96,4)"
+# @option --page <num> "Page number for results" @default 1
+company::search() {
+  local endpoint="/companies/search"
+  local json_payload
+
+  # Start building the JSON payload with mandatory fields (page is always sent)
+  json_payload=$(jq -n \
+    --arg keyword "$argc_keyword" \
+    --argjson page "$argc_page" \
+    '{ keyword: $keyword, page: $page }') # Start with keyword and page
+
+  # Add optional fields conditionally
+  json_payload=$(add_json_field "$json_payload" "locations" "$argc_locations" "number_array")
+  json_payload=$(add_json_field "$json_payload" "companySizes" "$argc_sizes" "string_array") # API uses "companySizes", codes are strings
+  json_payload=$(add_json_field "$json_payload" "industries" "$argc_industries" "number_array")
+  # Handle boolean flag --has-jobs
+  if [[ "$argc_has_jobs" == "true" ]]; then
+    json_payload=$(add_json_field "$json_payload" "hasJobs" "true" "boolean")
+  fi
+
+  make_request "POST" "$endpoint" "$json_payload"
+}
+
+# @cmd company domain Find a company by its domain name
+# @arg domain! "Company domain (e.g., apple.com)"
+company::domain() {
+  local endpoint="/get-company-by-domain?domain=${argc_domain}"
+  make_request "GET" "$endpoint"
+}
+
+# @cmd company insights Get premium company insights (requires appropriate API plan)
+# @arg username! "Company username/handle (e.g., amazon)"
+company::insights() {
+  local endpoint="/get-company-insights?username=${argc_username}"
+  make_request "GET" "$endpoint"
+}
+
+# --- Helper Functions ---
+
+# Function to exit with an error message
+die() {
+  echo "Error:" "$@" >&2
+  exit 1
+}
+
+# Helper function to add a field to a JSON object if the value is not empty
+# Usage: add_json_field <current_json> <key> <value> <type>
+# type can be: string, number, string_array, number_array, boolean
+add_json_field() {
+  local current_json="$1" key="$2" value="$3" type="${4:-string}"
+
+  if [[ -n "$value" ]]; then
+    # Prepare value based on type
+    local jq_filter
+    local jq_args=()
+
+    jq_args+=(--arg k "$key")
+
+    case "$type" in
+    string)
+      jq_args+=(--arg v "$value")
+      jq_filter='. + {($k): $v}'
+      ;;
+    number)
+      jq_args+=(--argjson v "$value") # Use argjson for numbers
+      jq_filter='. + {($k): $v}'
+      ;;
+    string_array)
+      # Split comma-separated string into JSON array of strings
+      local array_json=$(echo "$value" | jq -Rc 'split(",") | map(select(. != ""))') # Ensure empty strings aren't included
+      # Only add if array is not empty
+      if [[ "$(echo "$array_json" | jq 'length')" -gt 0 ]]; then
+        jq_args+=(--argjson v "$array_json")
+        jq_filter='. + {($k): $v}'
+      else
+        # If array would be empty, don't add the key
+        echo "$current_json"
+        return
+      fi
+      ;;
+    number_array)
+      # Split comma-separated string into JSON array of numbers
+      # Attempt conversion to number, keep as string if fails (robustness)
+      local array_json=$(echo "$value" | jq -Rc 'split(",") | map(select(. != "") | tonumber? // .)')
+      # Only add if array is not empty
+      if [[ "$(echo "$array_json" | jq 'length')" -gt 0 ]]; then
+        jq_args+=(--argjson v "$array_json")
+        jq_filter='. + {($k): $v}'
+      else
+        echo "$current_json"
+        return
+      fi
+      ;;
+    boolean)
+      # Value should be 'true' or 'false' string, pass via argjson
+      jq_args+=(--argjson v "$value")
+      jq_filter='. + {($k): $v}'
+      ;;
+    *)
+      # Unknown type, return original JSON
+      echo "$current_json"
+      return
+      ;;
+    esac
+    # Apply the filter
+    echo "$current_json" | jq "${jq_args[@]}" "$jq_filter"
+  else
+    # Value is empty, return original JSON
+    echo "$current_json"
+  fi
+}
+
+# Function to make API requests using curl
+# Usage: make_request <METHOD> <ENDPOINT_PATH> [JSON_DATA]
+make_request() {
+  local method="$1"
+  local endpoint_path="$2"
+  local json_data="${3:-}"
+  local host="${argc_host:-linkedin-api8.p.rapidapi.com}"
+  local base_url="https://${host}"
+  local full_url="${base_url}${endpoint_path}"
+
+  # Debug: Uncomment to see the full URL
+  # echo "DEBUG: Full URL: ${full_url}" >&2
+
+  local curl_opts=(-s) # Silent but show errors
+  local headers=()
+  headers+=(-H "x-rapidapi-host: ${host}")
+  headers+=(-H "x-rapidapi-key: ${API_KEY:-$LINKEDIN_API_KEY}")
+
+  # Add method-specific options and headers
+  if [[ "$method" == "POST" ]]; then
+    curl_opts+=(-X POST)
+    headers+=(-H "Content-Type: application/json")
+    [[ -n "$json_data" ]] && curl_opts+=(--data-raw "$json_data")
+  elif [[ "$method" == "GET" ]]; then
+    curl_opts+=(-X GET)
+  else
+    die "Unsupported HTTP method: $method"
+  fi
+
+  # Execute curl with more detailed error reporting
+  local response
+  local status_code
+
+  # Use a temp file to capture response
+  local tmp_file=$(mktemp)
+  status_code=$(curl -o "$tmp_file" -w "%{http_code}" "${curl_opts[@]}" "${headers[@]}" "$full_url" 2>&1)
+  local curl_exit_code=$?
+  response=$(<"$tmp_file")
+  rm "$tmp_file"
+
+  # Check for curl errors first
+  if [[ $curl_exit_code -ne 0 ]]; then
+    echo "Curl error (code $curl_exit_code): $status_code" >&2
+    echo "Full URL was: $full_url" >&2
+    exit 1
+  fi
+
+  # Check HTTP status code
+  if [[ "$status_code" -lt 200 || "$status_code" -ge 300 ]]; then
+    echo "API Error: HTTP status code $status_code" >&2
+    echo "Full URL was: $full_url" >&2
+    if [[ -n "$response" ]]; then
+      if echo "$response" | jq '.' >/dev/null 2>&1; then
+        echo "$response" | jq '.' >&2
+      else
+        echo "$response" >&2
+      fi
+    fi
+    exit 1
+  fi
+
+  # Output the response
+  if [[ "$argc_json" == "true" ]]; then
+    echo "$response"
+  else
+    if echo "$response" | jq '.' >/dev/null 2>&1; then
+      echo "$response" | jq '.'
+    else
+      echo "$response"
+    fi
+  fi
+}
+
+# --- Main Script Logic ---
+
+# Parse arguments using argc
+# ARGC-BUILD {
+# This block was generated by argc (https://github.com/sigoden/argc).
+# Modifying it manually is not recommended
+
+_argc_run() {
+    if [[ "${1:-}" == "___internal___" ]]; then
+        _argc_die "error: unsupported ___internal___ command"
+    fi
+    if [[ "${OS:-}" == "Windows_NT" ]] && [[ -n "${MSYSTEM:-}" ]]; then
+        set -o igncr
+    fi
+    argc__args=("$(basename "$0" .sh)" "$@")
+    argc__positionals=()
+    _argc_index=1
+    _argc_len="${#argc__args[@]}"
+    _argc_tools=()
+    _argc_parse
+    _argc_require_tools "${_argc_tools[@]}"
+    if [ -n "${argc__fn:-}" ]; then
+        $argc__fn "${argc__positionals[@]}"
+    fi
+}
+
+_argc_usage() {
+    cat <<-'EOF'
+Interact with the LinkedIn Data API
+
+USAGE: linkedin [OPTIONS] <COMMAND>
+
+OPTIONS:
+  -k, --key <KEY>    "Your RapidAPI Key for LinkedIn API (or set LINKEDIN_API_KEY)"
+  -h, --host <HOST>  "RapidAPI host for LinkedIn API" @default "linkedin-api8.p.rapidapi.com"
+  -j, --json         "Output raw JSON (skip jq pretty-printing)"
+      --help         Print help
+  -V, --version      Print version
+
+COMMANDS:
+  profile  Interact with LinkedIn profiles
+  posts    Interact with LinkedIn posts
+  people   Interact with LinkedIn people
+  company  Interact with LinkedIn companies
+EOF
+    exit
+}
+
+_argc_version() {
+    echo linkedin 0.0.0
+    exit
+}
+
+_argc_parse() {
+    local _argc_key _argc_action
+    local _argc_subcmds="profile, posts, people, company"
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help)
+            _argc_usage
+            ;;
+        --version | -version | -V)
+            _argc_version
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        --key | -k)
+            _argc_take_args "--key <KEY>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_key:-}" ]]; then
+                argc_key="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--key\` cannot be used multiple times"
+            fi
+            ;;
+        --host | -h)
+            _argc_take_args "--host <HOST>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_host:-}" ]]; then
+                argc_host="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--host\` cannot be used multiple times"
+            fi
+            ;;
+        --json | -j)
+            if [[ "$_argc_item" == *=* ]]; then
+                _argc_die "error: flag \`--json\` don't accept any value"
+            fi
+            _argc_index=$((_argc_index + 1))
+            if [[ -n "${argc_json:-}" ]]; then
+                _argc_die "error: the argument \`--json\` cannot be used multiple times"
+            else
+                argc_json=1
+            fi
+            ;;
+        profile)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_profile
+            break
+            ;;
+        posts)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_posts
+            break
+            ;;
+        people)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_people
+            break
+            ;;
+        company)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_company
+            break
+            ;;
+        help)
+            local help_arg="${argc__args[$((_argc_index + 1))]:-}"
+            case "$help_arg" in
+            profile)
+                _argc_usage_profile
+                ;;
+            posts)
+                _argc_usage_posts
+                ;;
+            people)
+                _argc_usage_people
+                ;;
+            company)
+                _argc_usage_company
+                ;;
+            "")
+                _argc_usage
+                ;;
+            *)
+                _argc_die "error: invalid value \`$help_arg\` for \`<command>\`"$'\n'"  [possible values: $_argc_subcmds]"
+                ;;
+            esac
+            ;;
+        *)
+            if _argc_maybe_flag_option "-" "$_argc_item"; then
+                _argc_die "error: unexpected argument \`$_argc_key\` found"
+            fi
+            _argc_die "error: \`linkedin\` requires a subcommand but one was not provided"$'\n'"  [subcommands: $_argc_subcmds]"
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        _argc_usage
+    fi
+}
+
+_argc_usage_profile() {
+    cat <<-'EOF'
+Interact with LinkedIn profiles
+
+USAGE: linkedin profile <COMMAND>
+
+COMMANDS:
+  get          Get basic profile data
+  connections  profile connections Get profile connection count
+  all          profile all Get profile data, connection count, and posts
+EOF
+    exit
+}
+
+_argc_parse_profile() {
+    local _argc_key _argc_action
+    local _argc_subcmds="get, connections, all"
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_profile
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        get)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_profile_get
+            break
+            ;;
+        connections)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_profile_connections
+            break
+            ;;
+        all)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_profile_all
+            break
+            ;;
+        help)
+            local help_arg="${argc__args[$((_argc_index + 1))]:-}"
+            case "$help_arg" in
+            get)
+                _argc_usage_profile_get
+                ;;
+            connections)
+                _argc_usage_profile_connections
+                ;;
+            all)
+                _argc_usage_profile_all
+                ;;
+            "")
+                _argc_usage_profile
+                ;;
+            *)
+                _argc_die "error: invalid value \`$help_arg\` for \`<command>\`"$'\n'"  [possible values: $_argc_subcmds]"
+                ;;
+            esac
+            ;;
+        *)
+            _argc_die "error: \`linkedin-profile\` requires a subcommand but one was not provided"$'\n'"  [subcommands: $_argc_subcmds]"
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        _argc_usage_profile
+    fi
+}
+
+_argc_usage_profile_get() {
+    cat <<-'EOF'
+Get basic profile data
+
+USAGE: linkedin profile get <USERNAME>
+
+ARGS:
+  <USERNAME>  "LinkedIn profile username (e.g., satyanadella)"
+EOF
+    exit
+}
+
+_argc_parse_profile_get() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_profile_get
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        *)
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=profile::get
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_profile_get
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_username="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<USERNAME>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_profile_connections() {
+    cat <<-'EOF'
+profile connections Get profile connection count
+
+USAGE: linkedin profile connections <USERNAME>
+
+ARGS:
+  <USERNAME>  "LinkedIn profile username (e.g., adamselipsky)"
+EOF
+    exit
+}
+
+_argc_parse_profile_connections() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_profile_connections
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        *)
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=profile::connections
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_profile_connections
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_username="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<USERNAME>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_profile_all() {
+    cat <<-'EOF'
+profile all Get profile data, connection count, and posts
+
+USAGE: linkedin profile all <USERNAME>
+
+ARGS:
+  <USERNAME>  "LinkedIn profile username (e.g., adamselipsky)"
+EOF
+    exit
+}
+
+_argc_parse_profile_all() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_profile_all
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        *)
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=profile::all
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_profile_all
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_username="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<USERNAME>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_posts() {
+    cat <<-'EOF'
+Interact with LinkedIn posts
+
+USAGE: linkedin posts <COMMAND>
+
+COMMANDS:
+  search             posts search Search for posts based on criteria
+  get_with_comments  posts get-with-comments Get a specific post with its comments [aliases: get-with-comments]
+EOF
+    exit
+}
+
+_argc_parse_posts() {
+    local _argc_key _argc_action
+    local _argc_subcmds="search, get_with_comments, get-with-comments"
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_posts
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        search)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_posts_search
+            break
+            ;;
+        get_with_comments | get-with-comments)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_posts_get_with_comments
+            break
+            ;;
+        help)
+            local help_arg="${argc__args[$((_argc_index + 1))]:-}"
+            case "$help_arg" in
+            search)
+                _argc_usage_posts_search
+                ;;
+            get_with_comments | get-with-comments)
+                _argc_usage_posts_get_with_comments
+                ;;
+            "")
+                _argc_usage_posts
+                ;;
+            *)
+                _argc_die "error: invalid value \`$help_arg\` for \`<command>\`"$'\n'"  [possible values: $_argc_subcmds]"
+                ;;
+            esac
+            ;;
+        *)
+            _argc_die "error: \`linkedin-posts\` requires a subcommand but one was not provided"$'\n'"  [subcommands: $_argc_subcmds]"
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        _argc_usage_posts
+    fi
+}
+
+_argc_usage_posts_search() {
+    cat <<-'EOF'
+posts search Search for posts based on criteria
+
+USAGE: linkedin posts search [OPTIONS] <KEYWORD>
+
+ARGS:
+  <KEYWORD>  "Keyword to search for in posts"
+
+OPTIONS:
+      --sort-by <SORT>         "Sort results (date_posted, relevance)" @default "date_posted"
+      --date-posted <PERIOD>   "Filter by date posted (e.g., 'Past 24 hours', 'Past week', 'Past month')"
+      --page <NUM>             "Page number for results" @default 1
+      --content-type <TYPE>    "Filter by content type (e.g., ARTICLE, IMAGE, VIDEO)"
+      --from-member <IDS>      "Filter by author member IDs (comma-separated URNs like ACoAA...)"
+      --from-company <IDS>     "Filter by author company IDs (comma-separated numbers like 1441,1035)"
+      --mentions-member <IDS>  "Filter by mentioned member IDs (comma-separated URNs)"
+      --mentions-org <IDS>     "Filter by mentioned organization IDs (comma-separated numbers)"
+      --author-industry <IDS>  "Filter by author industry IDs (comma-separated numbers like 96,4)"
+      --author-company <IDS>   "Filter by author company IDs (comma-separated numbers)"
+      --author-title <TITLE>   "Filter by author title (string)"
+  -h, --help                   Print help
+EOF
+    exit
+}
+
+_argc_parse_posts_search() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_posts_search
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        --sort-by)
+            _argc_take_args "--sort-by <SORT>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_sort_by:-}" ]]; then
+                argc_sort_by="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--sort-by\` cannot be used multiple times"
+            fi
+            ;;
+        --date-posted)
+            _argc_take_args "--date-posted <PERIOD>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_date_posted:-}" ]]; then
+                argc_date_posted="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--date-posted\` cannot be used multiple times"
+            fi
+            ;;
+        --page)
+            _argc_take_args "--page <NUM>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_page:-}" ]]; then
+                argc_page="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--page\` cannot be used multiple times"
+            fi
+            ;;
+        --content-type)
+            _argc_take_args "--content-type <TYPE>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_content_type:-}" ]]; then
+                argc_content_type="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--content-type\` cannot be used multiple times"
+            fi
+            ;;
+        --from-member)
+            _argc_take_args "--from-member <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_from_member:-}" ]]; then
+                argc_from_member="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--from-member\` cannot be used multiple times"
+            fi
+            ;;
+        --from-company)
+            _argc_take_args "--from-company <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_from_company:-}" ]]; then
+                argc_from_company="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--from-company\` cannot be used multiple times"
+            fi
+            ;;
+        --mentions-member)
+            _argc_take_args "--mentions-member <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_mentions_member:-}" ]]; then
+                argc_mentions_member="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--mentions-member\` cannot be used multiple times"
+            fi
+            ;;
+        --mentions-org)
+            _argc_take_args "--mentions-org <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_mentions_org:-}" ]]; then
+                argc_mentions_org="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--mentions-org\` cannot be used multiple times"
+            fi
+            ;;
+        --author-industry)
+            _argc_take_args "--author-industry <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_author_industry:-}" ]]; then
+                argc_author_industry="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--author-industry\` cannot be used multiple times"
+            fi
+            ;;
+        --author-company)
+            _argc_take_args "--author-company <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_author_company:-}" ]]; then
+                argc_author_company="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--author-company\` cannot be used multiple times"
+            fi
+            ;;
+        --author-title)
+            _argc_take_args "--author-title <TITLE>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_author_title:-}" ]]; then
+                argc_author_title="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--author-title\` cannot be used multiple times"
+            fi
+            ;;
+        *)
+            if _argc_maybe_flag_option "-" "$_argc_item"; then
+                _argc_die "error: unexpected argument \`$_argc_key\` found"
+            fi
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=posts::search
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_posts_search
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_keyword="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<KEYWORD>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_posts_get_with_comments() {
+    cat <<-'EOF'
+posts get-with-comments Get a specific post with its comments
+
+USAGE: linkedin posts get_with_comments <URN>
+
+ARGS:
+  <URN>  "Post URN (e.g., 7181285160586211328)"
+EOF
+    exit
+}
+
+_argc_parse_posts_get_with_comments() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_posts_get_with_comments
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        *)
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=posts::get_with_comments
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_posts_get_with_comments
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_urn="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<URN>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_people() {
+    cat <<-'EOF'
+Interact with LinkedIn people
+
+USAGE: linkedin people <COMMAND>
+
+COMMANDS:
+  search  people search Search for people based on criteria
+EOF
+    exit
+}
+
+_argc_parse_people() {
+    local _argc_key _argc_action
+    local _argc_subcmds="search"
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_people
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        search)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_people_search
+            break
+            ;;
+        help)
+            local help_arg="${argc__args[$((_argc_index + 1))]:-}"
+            case "$help_arg" in
+            search)
+                _argc_usage_people_search
+                ;;
+            "")
+                _argc_usage_people
+                ;;
+            *)
+                _argc_die "error: invalid value \`$help_arg\` for \`<command>\`"$'\n'"  [possible values: $_argc_subcmds]"
+                ;;
+            esac
+            ;;
+        *)
+            _argc_die "error: \`linkedin-people\` requires a subcommand but one was not provided"$'\n'"  [subcommands: $_argc_subcmds]"
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        _argc_usage_people
+    fi
+}
+
+_argc_usage_people_search() {
+    cat <<-'EOF'
+people search Search for people based on criteria
+
+USAGE: linkedin people search [OPTIONS] <KEYWORDS>
+
+ARGS:
+  <KEYWORDS>  "Keywords to search for (e.g., 'software engineer')"
+
+OPTIONS:
+      --start <NUM>  "Starting position for results" @default 0
+      --geo <IDS>    "Filter by location Geo IDs (comma-separated numbers like 103644278,101165590)"
+      --page <NUM>   "Page number for results" @default 1
+  -h, --help         Print help
+EOF
+    exit
+}
+
+_argc_parse_people_search() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_people_search
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        --start)
+            _argc_take_args "--start <NUM>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_start:-}" ]]; then
+                argc_start="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--start\` cannot be used multiple times"
+            fi
+            ;;
+        --geo)
+            _argc_take_args "--geo <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_geo:-}" ]]; then
+                argc_geo="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--geo\` cannot be used multiple times"
+            fi
+            ;;
+        --page)
+            _argc_take_args "--page <NUM>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_page:-}" ]]; then
+                argc_page="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--page\` cannot be used multiple times"
+            fi
+            ;;
+        *)
+            if _argc_maybe_flag_option "-" "$_argc_item"; then
+                _argc_die "error: unexpected argument \`$_argc_key\` found"
+            fi
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=people::search
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_people_search
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_keywords="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<KEYWORDS>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_company() {
+    cat <<-'EOF'
+Interact with LinkedIn companies
+
+USAGE: linkedin company <COMMAND>
+
+COMMANDS:
+  get       company get Get details for a specific company
+  search    company search Search for companies based on criteria
+  domain    company domain Find a company by its domain name
+  insights  company insights Get premium company insights (requires appropriate API plan)
+EOF
+    exit
+}
+
+_argc_parse_company() {
+    local _argc_key _argc_action
+    local _argc_subcmds="get, search, domain, insights"
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_company
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        get)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_company_get
+            break
+            ;;
+        search)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_company_search
+            break
+            ;;
+        domain)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_company_domain
+            break
+            ;;
+        insights)
+            _argc_index=$((_argc_index + 1))
+            _argc_action=_argc_parse_company_insights
+            break
+            ;;
+        help)
+            local help_arg="${argc__args[$((_argc_index + 1))]:-}"
+            case "$help_arg" in
+            get)
+                _argc_usage_company_get
+                ;;
+            search)
+                _argc_usage_company_search
+                ;;
+            domain)
+                _argc_usage_company_domain
+                ;;
+            insights)
+                _argc_usage_company_insights
+                ;;
+            "")
+                _argc_usage_company
+                ;;
+            *)
+                _argc_die "error: invalid value \`$help_arg\` for \`<command>\`"$'\n'"  [possible values: $_argc_subcmds]"
+                ;;
+            esac
+            ;;
+        *)
+            _argc_die "error: \`linkedin-company\` requires a subcommand but one was not provided"$'\n'"  [subcommands: $_argc_subcmds]"
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        _argc_usage_company
+    fi
+}
+
+_argc_usage_company_get() {
+    cat <<-'EOF'
+company get Get details for a specific company
+
+USAGE: linkedin company get <USERNAME>
+
+ARGS:
+  <USERNAME>  "Company username/handle (e.g., google)"
+EOF
+    exit
+}
+
+_argc_parse_company_get() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_company_get
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        *)
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=company::get
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_company_get
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_username="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<USERNAME>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_company_search() {
+    cat <<-'EOF'
+company search Search for companies based on criteria
+
+USAGE: linkedin company search [OPTIONS]
+
+OPTIONS:
+      --keyword <KEYWORD>  "Keyword to search for in company name/description" @default ""
+      --locations <IDS>    "Filter by location Geo IDs (comma-separated numbers like 103644278)"
+      --sizes <CODES>      "Filter by company size codes (comma-separated, e.g., D,E,F,G)"
+      --has-jobs           "Only include companies with job postings"
+      --industries <IDS>   "Filter by industry IDs (comma-separated numbers like 96,4)"
+      --page <NUM>         "Page number for results" @default 1
+  -h, --help               Print help
+EOF
+    exit
+}
+
+_argc_parse_company_search() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_company_search
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        --keyword)
+            _argc_take_args "--keyword <KEYWORD>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_keyword:-}" ]]; then
+                argc_keyword="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--keyword\` cannot be used multiple times"
+            fi
+            ;;
+        --locations)
+            _argc_take_args "--locations <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_locations:-}" ]]; then
+                argc_locations="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--locations\` cannot be used multiple times"
+            fi
+            ;;
+        --sizes)
+            _argc_take_args "--sizes <CODES>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_sizes:-}" ]]; then
+                argc_sizes="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--sizes\` cannot be used multiple times"
+            fi
+            ;;
+        --has-jobs)
+            if [[ "$_argc_item" == *=* ]]; then
+                _argc_die "error: flag \`--has-jobs\` don't accept any value"
+            fi
+            _argc_index=$((_argc_index + 1))
+            if [[ -n "${argc_has_jobs:-}" ]]; then
+                _argc_die "error: the argument \`--has-jobs\` cannot be used multiple times"
+            else
+                argc_has_jobs=1
+            fi
+            ;;
+        --industries)
+            _argc_take_args "--industries <IDS>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_industries:-}" ]]; then
+                argc_industries="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--industries\` cannot be used multiple times"
+            fi
+            ;;
+        --page)
+            _argc_take_args "--page <NUM>" 1 1 "-" ""
+            _argc_index=$((_argc_index + _argc_take_args_len + 1))
+            if [[ -z "${argc_page:-}" ]]; then
+                argc_page="${_argc_take_args_values[0]:-}"
+            else
+                _argc_die "error: the argument \`--page\` cannot be used multiple times"
+            fi
+            ;;
+        *)
+            if _argc_maybe_flag_option "-" "$_argc_item"; then
+                _argc_die "error: unexpected argument \`$_argc_key\` found"
+            fi
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=company::search
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_company_search
+        fi
+    fi
+}
+
+_argc_usage_company_domain() {
+    cat <<-'EOF'
+company domain Find a company by its domain name
+
+USAGE: linkedin company domain <DOMAIN>
+
+ARGS:
+  <DOMAIN>  "Company domain (e.g., apple.com)"
+EOF
+    exit
+}
+
+_argc_parse_company_domain() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_company_domain
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        *)
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=company::domain
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_company_domain
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_domain="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<DOMAIN>\` were not provided"
+        fi
+    fi
+}
+
+_argc_usage_company_insights() {
+    cat <<-'EOF'
+company insights Get premium company insights (requires appropriate API plan)
+
+USAGE: linkedin company insights <USERNAME>
+
+ARGS:
+  <USERNAME>  "Company username/handle (e.g., amazon)"
+EOF
+    exit
+}
+
+_argc_parse_company_insights() {
+    local _argc_key _argc_action
+    local _argc_subcmds=""
+    while [[ $_argc_index -lt $_argc_len ]]; do
+        _argc_item="${argc__args[_argc_index]}"
+        _argc_key="${_argc_item%%=*}"
+        case "$_argc_key" in
+        --help | -help | -h)
+            _argc_usage_company_insights
+            ;;
+        --)
+            _argc_dash="${#argc__positionals[@]}"
+            argc__positionals+=("${argc__args[@]:$((_argc_index + 1))}")
+            _argc_index=$_argc_len
+            break
+            ;;
+        *)
+            argc__positionals+=("$_argc_item")
+            _argc_index=$((_argc_index + 1))
+            ;;
+        esac
+    done
+    _argc_tools=(curl jq)
+    if [[ -n "${_argc_action:-}" ]]; then
+        $_argc_action
+    else
+        argc__fn=company::insights
+        if [[ "${argc__positionals[0]:-}" == "help" ]] && [[ "${#argc__positionals[@]}" -eq 1 ]]; then
+            _argc_usage_company_insights
+        fi
+        _argc_match_positionals 0
+        local values_index values_size
+        IFS=: read -r values_index values_size <<<"${_argc_match_positionals_values[0]:-}"
+        if [[ -n "$values_index" ]]; then
+            argc_username="${argc__positionals[values_index]}"
+        else
+            _argc_die "error: the required environments \`<USERNAME>\` were not provided"
+        fi
+    fi
+}
+
+_argc_take_args() {
+    _argc_take_args_values=()
+    _argc_take_args_len=0
+    local param="$1" min="$2" max="$3" signs="$4" delimiter="$5"
+    if [[ "$min" -eq 0 ]] && [[ "$max" -eq 0 ]]; then
+        return
+    fi
+    local _argc_take_index=$((_argc_index + 1)) _argc_take_value
+    if [[ "$_argc_item" == *=* ]]; then
+        _argc_take_args_values=("${_argc_item##*=}")
+    else
+        while [[ $_argc_take_index -lt $_argc_len ]]; do
+            _argc_take_value="${argc__args[_argc_take_index]}"
+            if _argc_maybe_flag_option "$signs" "$_argc_take_value"; then
+                if [[ "${#_argc_take_value}" -gt 1 ]]; then
+                    break
+                fi
+            fi
+            _argc_take_args_values+=("$_argc_take_value")
+            _argc_take_args_len=$((_argc_take_args_len + 1))
+            if [[ "$_argc_take_args_len" -ge "$max" ]]; then
+                break
+            fi
+            _argc_take_index=$((_argc_take_index + 1))
+        done
+    fi
+    if [[ "${#_argc_take_args_values[@]}" -lt "$min" ]]; then
+        _argc_die "error: incorrect number of values for \`$param\`"
+    fi
+    if [[ -n "$delimiter" ]] && [[ "${#_argc_take_args_values[@]}" -gt 0 ]]; then
+        local item values arr=()
+        for item in "${_argc_take_args_values[@]}"; do
+            IFS="$delimiter" read -r -a values <<<"$item"
+            arr+=("${values[@]}")
+        done
+        _argc_take_args_values=("${arr[@]}")
+    fi
+}
+
+_argc_match_positionals() {
+    _argc_match_positionals_values=()
+    _argc_match_positionals_len=0
+    local params=("$@")
+    local args_len="${#argc__positionals[@]}"
+    if [[ $args_len -eq 0 ]]; then
+        return
+    fi
+    local params_len=$# arg_index=0 param_index=0
+    while [[ $param_index -lt $params_len && $arg_index -lt $args_len ]]; do
+        local takes=0
+        if [[ "${params[param_index]}" -eq 1 ]]; then
+            if [[ $param_index -eq 0 ]] &&
+                [[ ${_argc_dash:-} -gt 0 ]] &&
+                [[ $params_len -eq 2 ]] &&
+                [[ "${params[$((param_index + 1))]}" -eq 1 ]] \
+                ; then
+                takes=${_argc_dash:-}
+            else
+                local arg_diff=$((args_len - arg_index)) param_diff=$((params_len - param_index))
+                if [[ $arg_diff -gt $param_diff ]]; then
+                    takes=$((arg_diff - param_diff + 1))
+                else
+                    takes=1
+                fi
+            fi
+        else
+            takes=1
+        fi
+        _argc_match_positionals_values+=("$arg_index:$takes")
+        arg_index=$((arg_index + takes))
+        param_index=$((param_index + 1))
+    done
+    if [[ $arg_index -lt $args_len ]]; then
+        _argc_match_positionals_values+=("$arg_index:$((args_len - arg_index))")
+    fi
+    _argc_match_positionals_len=${#_argc_match_positionals_values[@]}
+    if [[ $params_len -gt 0 ]] && [[ $_argc_match_positionals_len -gt $params_len ]]; then
+        local index="${_argc_match_positionals_values[params_len]%%:*}"
+        _argc_die "error: unexpected argument \`${argc__positionals[index]}\` found"
+    fi
+}
+
+_argc_maybe_flag_option() {
+    local signs="$1" arg="$2"
+    if [[ -z "$signs" ]]; then
+        return 1
+    fi
+    local cond=false
+    if [[ "$signs" == *"+"* ]]; then
+        if [[ "$arg" =~ ^\+[^+].* ]]; then
+            cond=true
+        fi
+    elif [[ "$arg" == -* ]]; then
+        if (( ${#arg} < 3 )) || [[ ! "$arg" =~ ^---.* ]]; then
+            cond=true
+        fi
+    fi
+    if [[ "$cond" == "false" ]]; then
+        return 1
+    fi
+    local value="${arg%%=*}"
+    if [[ "$value" =~ [[:space:]] ]]; then
+        return 1
+    fi
+    return 0
+}
+
+_argc_require_tools() {
+    local tool missing_tools=()
+    for tool in "$@"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing_tools+=("$tool")
+        fi
+    done
+    if [[ "${#missing_tools[@]}" -gt 0 ]]; then
+        echo "error: missing tools: ${missing_tools[*]}" >&2
+        exit 1
+    fi
+}
+
+_argc_die() {
+    if [[ $# -eq 0 ]]; then
+        cat
+    else
+        echo "$*" >&2
+    fi
+    exit 1
+}
+
+_argc_run "$@"
+
+# ARGC-BUILD }
+
+# Check for required tools
+if ! command -v curl &>/dev/null; then die "curl is not installed. Please install it."; fi
+if ! command -v jq &>/dev/null; then die "jq is not installed. Please install it."; fi
+
+# Determine API Key
+API_KEY="${argc_key:-${LINKEDIN_API_KEY:-}}"
+if [[ -z "${API_KEY// /}" ]]; then
+  die API key is required. Use -k/--key option or set LINKEDIN_API_KEY environment variable.
+fi
+
+# Determine API Host
+if [[ -z "$argc_host" ]]; then
+  # Use the default value if host parameter wasn't provided
+  argc_host="linkedin-api8.p.rapidapi.com"
+fi
+
+# Rest of the script continues...
+
+exit 0 # Exit successfully after command execution
