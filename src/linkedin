@@ -108,12 +108,16 @@ people::search() {
   local start_value="${argc_start:-0}"
   local page_value="${argc_page:-1}"
 
-  local query_params="?keywords=${argc_keywords}&start=${start_value}"
+  # URL encode the keywords parameter
+  local encoded_keywords=$(url_encode "$argc_keywords")
+  local query_params="?keywords=${encoded_keywords}&start=${start_value}"
 
   query_params="${query_params}&page=${page_value}"
 
   if [[ -n "$argc_geo" ]]; then
-    query_params="${query_params}&geo=${argc_geo}"
+    # URL encode the geo parameter as well
+    local encoded_geo=$(url_encode "$argc_geo")
+    query_params="${query_params}&geo=${encoded_geo}"
   fi
 
   make_request "GET" "${endpoint}${query_params}"
@@ -194,6 +198,23 @@ company::insights() {
 die() {
   echo "Error:" "$@" >&2
   exit 1
+}
+
+url_encode() {
+  local string="${1}"
+  local strlen=${#string}
+  local encoded=""
+  local pos c o
+
+  for (( pos=0 ; pos<strlen ; pos++ )); do
+     c=${string:$pos:1}
+     case "$c" in
+        [-_.~a-zA-Z0-9] ) o="${c}" ;;
+        * )               printf -v o '%%%02x' "'$c"
+     esac
+     encoded+="${o}"
+  done
+  echo "${encoded}"
 }
 
 add_json_field() {
